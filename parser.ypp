@@ -1,0 +1,592 @@
+%{
+    #include <cstdio>
+    #include <cstdlib>
+
+    #include "ast.hpp"
+    #include "primitive.hpp"
+    #include "symtab.hpp"
+
+    #define YYDEBUG 1
+
+    extern Program_ptr ast;
+    int yylex(void);
+    void yyerror(const char *);
+%}
+
+/* Enables verbose error messages */
+%error-verbose
+
+/** WRITE ME:
+ *  - Put all your token definitions here
+ *  - Put all your type definitions here
+ *  - Put all your precedence/associativity rules here
+ */
+
+/* Keywords Lexems */
+%token BOOLEAN
+%token CHARACTER
+%token INTEGER
+%token STRING
+%token INTEGERPOINTER
+%token CHARPOINTER
+%token IF
+%token ELSE
+%token WHILE
+%token VAR
+%token PROCEDURE
+%token RETURN
+%token NULLT
+
+/* Operator Lexemes */
+%right ASSIGNMENT
+%left OR
+%left AND
+%left EQUALITY NOTEQUAL
+%left LESS LESSEQUAL GREATER GREATEREQUAL
+%left PLUS MINUS
+%left MULTIPLY SLASH
+%right DEREFERENCE NOT REFERENCE 
+
+/* Literal Lexemes, boolean, char, string, identifier, pointer*/
+
+
+%token TRUE
+%token FALSE
+
+
+/* Other Lexemes */
+%token SEMICOLON
+%token COLON
+%token COMMA
+%token BAR
+%token OPENBRACES
+%token CLOSEBRACES
+%token OPENPARENTHESIS
+%token CLOSEPARENTHESIS
+%token OPENBRACKETS
+%token CLOSEBRACKETS
+
+%type <u_program> START
+%type <u_proc_list> PROCEDURES_NT
+%type <u_proc> PROCEDURE_NT
+%type <u_procedure_block> BODYP_NT
+%type <u_type> TYPEP_NT TYPE_NT
+%type <u_decl_list> PARAMETERS_NT PARAMETERSP_NT PARAMETERSP_LIST DECLARATIONS_NT
+%type <u_symname_list> VARIABLES_NT VARIABLES_LIST
+%type <u_stat_list> STATEMENTS_NT
+%type <u_return_stat> RETURN_STMT
+%type <u_nested_block> BODY_NT ELSE_NT
+%type <u_expr> EXPR_NT FACTOR  DEREFERENCE_NT DEREFERENCE_NTP REFERENCE_NT
+%type <u_expr_list> ARGLIST ARGLISTP
+%type <u_stat> IFSTATEMENT WHILESTATEMENT BLOCK_NT  ASSIGNMENT_NT  FUNCTIONCALL_NT
+%token <u_base_charptr>  IDENTIFIER
+%token <u_base_int> INTEGERVAL_BI INTEGERVAL_DEC INTEGERVAL_OCT INTEGERVAL_HEX CHARVAL
+%token <u_base_charptr> STRINGVAL
+
+%%
+
+START           : PROCEDURE_NT PROCEDURES_NT
+                    {
+                        $2->push_front($1);
+                        $$ = new ProgramImpl($2);
+                        ast = $$;
+                    }
+                ;
+
+PROCEDURES_NT   : 
+                    {
+                        $$ = new std::list<Proc_ptr>();
+                        //std::list<Proc_ptr> *sl = new std::list<Proc_ptr>();
+                        //$$ = sl;
+                    }   
+                | PROCEDURE_NT PROCEDURES_NT
+                    {
+                        $2->push_front($1);
+                        $$ = $2;
+                    }
+                ;
+
+PROCEDURE_NT    : PROCEDURE IDENTIFIER OPENPARENTHESIS PARAMETERS_NT CLOSEPARENTHESIS RETURN TYPEP_NT OPENBRACES BODYP_NT CLOSEBRACES
+                    {
+                        $$ = new ProcImpl(
+                            new SymName($2),
+                            $4,
+                            $7,
+                            $9
+                        );
+                    }
+                ;
+
+PARAMETERS_NT   :
+                    {
+                        $$ = new std::list<Decl_ptr>();
+                    }
+                | PARAMETERSP_NT
+                    {
+                        $$ = $1;
+                    }
+                ;
+
+PARAMETERSP_NT  : VARIABLES_NT COLON TYPEP_NT PARAMETERSP_LIST
+                    {
+                        ($4)->push_front(
+                            new DeclImpl(
+                                $1,
+                                $3
+                            )
+                        );
+                        $$ = $4;
+                    }
+                ;
+
+PARAMETERSP_LIST : 
+                    {
+                        $$ = new std::list<Decl_ptr>();
+                    }
+                 | SEMICOLON PARAMETERSP_NT
+                    {
+                        $$ = $2;
+                    }
+                 ;
+
+
+VARIABLES_NT    : IDENTIFIER VARIABLES_LIST
+                    {
+                        ($2)->push_front(new SymName($1));
+                        $$ = $2;
+                    }
+                ;
+
+VARIABLES_LIST  :
+                    {
+                        $$ = new std::list<SymName_ptr>();
+                    }
+                | COMMA IDENTIFIER VARIABLES_LIST
+                    {
+                        ($3)->push_front(new SymName($2));
+                        $$ = $3;
+                    }
+                ;
+
+BODYP_NT        : PROCEDURES_NT DECLARATIONS_NT STATEMENTS_NT RETURN_STMT
+                    {
+                        $$ = new Procedure_blockImpl(
+                            $1,
+                            $2,
+                            $3,
+                            $4
+                        );
+                    }
+                ;
+
+BODY_NT         : DECLARATIONS_NT STATEMENTS_NT
+                    {
+                        $$ = new Nested_blockImpl(
+                            $1,
+                            $2
+                        );
+                    }
+                ;
+
+RETURN_STMT     : RETURN EXPR_NT SEMICOLON
+                    {
+                        $$ = new Return(
+                            $2
+                        );
+                    }
+                ;
+
+DECLARATIONS_NT :
+                    {
+                        $$ = new std::list<Decl_ptr>();
+                    }
+
+                | VAR VARIABLES_NT COLON TYPE_NT SEMICOLON DECLARATIONS_NT
+                    {
+                        ($6)->push_front(
+                            new DeclImpl(
+                                $2,
+                                $4
+                            )
+                        );
+                        $$ = $6;
+                    }
+                ;
+
+STATEMENTS_NT   : 
+                    {
+                        $$ = new std::list<Stat_ptr>();
+                    }
+                | IFSTATEMENT STATEMENTS_NT
+                    {
+                        ($2)->push_front($1);
+                        $$ = $2;
+                    }
+                | WHILESTATEMENT STATEMENTS_NT
+                    {
+                        ($2)->push_front($1);
+                        $$ = $2;
+                    }
+                | ASSIGNMENT_NT STATEMENTS_NT
+                    {
+                        ($2)->push_front($1);
+                        $$ = $2;
+                    }
+                | BLOCK_NT STATEMENTS_NT
+                    {
+                        ($2)->push_front($1);
+                        $$ = $2;
+                    }
+                | FUNCTIONCALL_NT STATEMENTS_NT
+                    {
+                        ($2)->push_front($1);
+                        $$ = $2;
+                    }
+                ;
+
+IFSTATEMENT     : IF OPENPARENTHESIS EXPR_NT CLOSEPARENTHESIS OPENBRACES BODY_NT CLOSEBRACES ELSE_NT
+                    {
+                        if($8 == nullptr){
+                            $$ = new IfNoElse(
+                                $3,
+                                $6
+                            );
+                        }
+                        else{
+                            $$ = new IfWithElse(
+                                $3,
+                                $6,
+                                $8
+                            );
+                        }
+                    }
+                ;
+
+WHILESTATEMENT  : WHILE OPENPARENTHESIS EXPR_NT CLOSEPARENTHESIS OPENBRACES BODY_NT CLOSEBRACES
+                    {
+                        $$ = new WhileLoop(
+                            $3,
+                            $6
+                        );
+                    }
+                ;
+
+BLOCK_NT        : OPENBRACES BODY_NT CLOSEBRACES
+                    {
+                        $$ = new CodeBlock(
+                            $2
+                        );
+                    }
+                ;
+
+
+ELSE_NT         :
+                    {
+                        $$ = nullptr;
+                    }
+                | ELSE OPENBRACES BODY_NT CLOSEBRACES
+                    {
+                      $$ = $3;
+                    }
+                ;
+
+
+ASSIGNMENT_NT   : IDENTIFIER OPENBRACKETS EXPR_NT CLOSEBRACKETS ASSIGNMENT EXPR_NT SEMICOLON
+                    {
+                        $$ = new Assignment(
+                            new ArrayElement(
+                                new SymName($1),
+                                $3
+                            ),
+                            $6
+                        );
+                    }
+                | DEREFERENCE IDENTIFIER ASSIGNMENT EXPR_NT SEMICOLON
+                    {
+                        $$ = new Assignment(
+                            new DerefVariable(new SymName($2)),
+                            $4
+                        );
+                    }
+                | IDENTIFIER ASSIGNMENT EXPR_NT SEMICOLON
+                    {
+                        $$ = new Assignment(
+                            new Variable(new SymName($1)),
+                            $3
+                        );
+                    }
+                | IDENTIFIER ASSIGNMENT STRINGVAL SEMICOLON
+                    {
+                        $$ = new StringAssignment(
+                            new Variable(new SymName($1)),
+                            new StringPrimitive($3)
+                        );
+                    }
+                |
+                IDENTIFIER OPENBRACKETS EXPR_NT CLOSEBRACKETS ASSIGNMENT STRINGVAL SEMICOLON
+                    {
+                        $$ = new StringAssignment(
+                            new ArrayElement(
+                                new SymName($1),
+                                $3
+                            ),
+                            new StringPrimitive($6)
+                        );
+                    }
+                | DEREFERENCE IDENTIFIER ASSIGNMENT STRINGVAL SEMICOLON
+                    {
+                        $$ = new StringAssignment(
+                            new DerefVariable(new SymName($2)),
+                            new StringPrimitive($4)
+                        );
+                    }
+                ;
+
+
+FUNCTIONCALL_NT : IDENTIFIER OPENBRACKETS EXPR_NT CLOSEBRACKETS ASSIGNMENT IDENTIFIER OPENPARENTHESIS ARGLIST CLOSEPARENTHESIS SEMICOLON
+                    {
+                        $$ = new Call(
+                            new ArrayElement(new SymName($1), $3),
+                            new SymName($6),
+                            $8
+                        );
+                    }
+                | DEREFERENCE IDENTIFIER ASSIGNMENT IDENTIFIER OPENPARENTHESIS ARGLIST CLOSEPARENTHESIS SEMICOLON
+                    {
+                        $$ = new Call(
+                            new DerefVariable(new SymName($2)),
+                            new SymName($4),
+                            $6
+                        );
+                    }
+                | IDENTIFIER ASSIGNMENT IDENTIFIER OPENPARENTHESIS ARGLIST CLOSEPARENTHESIS SEMICOLON
+                    {
+                        $$ = new Call(
+                            new Variable(new SymName($1)),
+                            new SymName($3),
+                            $5
+                        );
+                    }
+                ;
+
+TYPE_NT         : BOOLEAN
+                    {
+                        $$ = new TBoolean();
+                    }
+                | CHARACTER
+                    {
+                        $$ = new TCharacter();
+                    }
+                | INTEGER
+                    {
+                        $$ = new TInteger();
+                    }
+                | STRING OPENBRACKETS INTEGERVAL_DEC CLOSEBRACKETS
+                    {
+                        $$ = new TString(new Primitive($3));
+                    }
+                | STRING OPENBRACKETS INTEGERVAL_BI CLOSEBRACKETS
+                    {
+                        $$ = new TString(new Primitive($3));
+                    }
+                | STRING OPENBRACKETS INTEGERVAL_OCT CLOSEBRACKETS
+                    {
+                        $$ = new TString(new Primitive($3));
+                    }
+                | STRING OPENBRACKETS INTEGERVAL_HEX CLOSEBRACKETS
+                    {
+                        $$ = new TString(new Primitive($3));
+                    }
+                | INTEGERPOINTER
+                    {
+                        $$ = new TIntPtr();
+                    }
+                | CHARPOINTER
+                    {
+                        $$ = new TCharPtr();
+                    }
+                ;
+
+
+TYPEP_NT        : BOOLEAN
+                    {$$ = new TBoolean();}
+                | CHARACTER
+                    {$$ = new TCharacter();}
+                | INTEGER
+                    {$$ = new TInteger();}
+                | INTEGERPOINTER
+                    {$$ = new TIntPtr();}
+                | CHARPOINTER
+                    { $$ = new TCharPtr();}
+                ;
+
+
+EXPR_NT         : EXPR_NT PLUS EXPR_NT
+                    {$$ = new  Plus($1, $3);}
+                | EXPR_NT MINUS EXPR_NT
+                    {$$ = new  Minus($1, $3);}
+                | EXPR_NT MULTIPLY EXPR_NT
+                    {$$ = new  Times($1, $3);}
+                | EXPR_NT SLASH EXPR_NT
+                    {$$ = new  Div($1, $3);}
+                | NOT EXPR_NT
+                    {$$ = new  Not($2);}
+                | EXPR_NT AND EXPR_NT
+                    {$$ = new  And($1, $3);}
+                | EXPR_NT OR EXPR_NT
+                    {$$ = new  Or($1, $3);}
+                | EXPR_NT NOTEQUAL EXPR_NT
+                    {$$ = new  Noteq($1, $3);}
+                | EXPR_NT EQUALITY EXPR_NT
+                    {$$ = new  Compare($1, $3);}
+                | EXPR_NT LESS EXPR_NT
+                    {$$ = new  Lt($1, $3);}
+                | EXPR_NT LESSEQUAL EXPR_NT
+                    {$$ = new  Lteq($1, $3);}
+                | EXPR_NT GREATER EXPR_NT
+                    {$$ = new  Gt($1, $3);}
+                | EXPR_NT GREATEREQUAL EXPR_NT
+                    {$$ = new  Gteq($1, $3);}
+                | FACTOR
+                    {$$ = $1;}
+                ;
+
+
+FACTOR          : OPENPARENTHESIS EXPR_NT CLOSEPARENTHESIS
+                    {$$ = $2;}
+                | BAR EXPR_NT BAR
+                    {$$ = new AbsoluteValue($2);}
+                | INTEGERVAL_DEC
+                    {$$ = new IntLit(new Primitive($1));}
+                | INTEGERVAL_HEX
+                    {$$ = new IntLit(new Primitive($1));}
+                | INTEGERVAL_OCT
+                    {$$ = new IntLit(new Primitive($1));}                
+                | INTEGERVAL_BI
+                    {$$ = new IntLit(new Primitive($1));}                
+                | CHARVAL
+                    {$$ = new CharLit(new Primitive($1));}
+                | NULLT
+                    {$$ = new NullLit();}
+                | IDENTIFIER OPENBRACKETS EXPR_NT CLOSEBRACKETS
+                    {
+                        $$ = new ArrayAccess(
+                            new SymName($1),
+                            $3
+                        );
+                    }
+                | IDENTIFIER
+                    {$$ = new Ident(new SymName($1));}
+                | TRUE
+                    {$$ = new BoolLit(new Primitive(1));}
+                | FALSE
+                    {$$ = new BoolLit(new Primitive(0));}
+                | MINUS EXPR_NT
+                    {$$ = new Uminus($2);}
+                | DEREFERENCE DEREFERENCE_NT
+                    {$$ = $2;}
+                | REFERENCE REFERENCE_NT
+                    {$$ = $2;}
+                ;
+
+ARGLIST         :
+                    {
+                        $$ = new std::list<Expr_ptr>();
+                    }
+                | ARGLISTP
+                    {
+                        $$ = $1;
+                    }
+                ;
+
+ARGLISTP        : EXPR_NT COMMA ARGLISTP
+                    {
+                        ($3)->push_front($1);
+                        $$ = $3;
+                    }
+                | EXPR_NT
+                    {
+                        std::list<Expr_ptr>* sl = new std::list<Expr_ptr>();
+                        sl->push_front($1);
+                        $$ = sl;
+                    }
+                ;
+
+DEREFERENCE_NT  : IDENTIFIER
+                    {$$ = new Deref(new Ident(new SymName($1)));}
+                | OPENPARENTHESIS DEREFERENCE_NTP CLOSEPARENTHESIS 
+                    {$$ = $2;}
+                ;
+
+REFERENCE_NT    : IDENTIFIER OPENBRACKETS EXPR_NT CLOSEBRACKETS
+                    {
+                        $$ = new AddressOf(
+                            new ArrayElement(
+                                new SymName($1),
+                                $3
+                            )
+                        );
+                    }
+                | IDENTIFIER
+                    {
+                        $$ = new AddressOf(
+                            new Variable(new SymName($1))
+                        );
+                    }
+                | OPENPARENTHESIS REFERENCE_NT CLOSEPARENTHESIS
+                    {$$ = $2;}
+                ;
+
+DEREFERENCE_NTP : IDENTIFIER PLUS EXPR_NT
+                    {
+                        $$ = new Deref(
+                            new Plus(
+                                new Ident(new SymName($1)),
+                                $3
+                            )
+                        );
+                    }
+                | IDENTIFIER MINUS EXPR_NT
+                    {
+                        $$ = new Deref(
+                            new Minus(
+                                new Ident(new SymName($1)),
+                                $3
+                            )
+                        );
+                    }
+                | IDENTIFIER SLASH EXPR_NT
+                    {
+                        $$ = new Deref(
+                            new Div(
+                                new Ident(new SymName($1)),
+                                $3
+                            )
+                        );
+                    }
+                | IDENTIFIER MULTIPLY EXPR_NT
+                    {
+                        $$ = new Deref(
+                            new Times(
+                                new Ident(new SymName($1)),
+                                $3
+                            )
+                        );
+                    } 
+                ;
+
+
+
+%%
+
+/** You shall not pass!
+ *  You should not  have to do or edit anything past this.
+ */
+
+extern int yylineno;
+
+void yyerror(const char *s)
+{
+    fprintf(stderr, "%s at line %d\n", s, yylineno);
+    return;
+}
